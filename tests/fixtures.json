@@ -1,0 +1,16 @@
+{
+  "profile": "api-test-only",
+  "markets": {
+    "SG": {"currency": "SGD", "motorTeam": "primary", "propertyTeam": "primary"},
+    "M2": {"currency": "USD", "motorTeam": "primary", "propertyTeam": "primary"}
+  },
+  "teams": ["primary", "other"],
+  "accounts": {
+    "A": {"email": "a@local.test", "role": "CLAIMANT", "market": "SG"},
+    "B": {"email": "b@local.test", "role": "CLAIMANT", "market": "SG"},
+    "O1": {"email": "o1@local.test", "role": "OFFICER", "team": "primary"},
+    "O2": {"email": "o2@local.test", "role": "OFFICER", "team": "primary"},
+    "O3": {"email": "o3@local.test", "role": "OFFICER", "team": "other"},
+    "M2": {"email": "m2@local.test", "role": "CLAIMANT", "market": "M2"}
+  }
+}

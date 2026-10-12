@@ -23,3 +23,5 @@ Stop without deleting the database or Kafka data:
 ```
 
 When the app exists, its host-side defaults from `start.sh` are `SPRING_DATASOURCE_URL=jdbc:postgresql://127.0.0.1:55432/claims` and `SPRING_KAFKA_BOOTSTRAP_SERVERS=127.0.0.1:29092`; the script also passes the local database username and password privately. Services communicate inside Compose over `postgres:5432` and `kafka:9092`. These are local developer settings, not production security defaults.
+
+**For the next agent (not implemented yet):** normal `./start.sh` must generate claimant A’s local password at `.local/claimant-a.password`, create `.local/` with mode `0700` and the file with mode `0600`, and seed A’s account with its secure hash. Preserve an existing credential on restart. The separate fresh-clone gate reads **only this ignored file** to log in and verify an authorized claim read. Never print the password or put it in `.env`, `.env.local`, logs, or committed files. Current startup still verifies infrastructure only.
