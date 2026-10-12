@@ -53,7 +53,7 @@
   <section id="login" class="card" style="max-width:480px">
     <h2>Sign in</h2>
     <p class="muted">Use your pre-created claimant or claims officer account.</p>
-    <form class="stack" onsubmit="signIn(event)">
+    <form class="stack" method="post" onsubmit="event.preventDefault(); window.signIn(event)">
       <label>Email<input id="email" type="email" autocomplete="username" required></label>
       <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
       <button class="primary" type="submit">Sign in</button>
@@ -75,7 +75,9 @@
   </div>
 </main>
 <script>
-  let csrf, account, selected, viewedVersion, noticeTimer, noticeBusy = false, noticeGeneration = 0;
+  let csrf, account, selected, viewedVersion, refreshTimer, noticeBusy = false, noticeGeneration = 0;
+  let dashboardBusy = false, refreshing = false, mutationBusy = 0, detailDirty = false, summarySnapshot = '';
+  const retryKeys = new Map();
   let currentView = 'unassigned', cursor = null, visibleRows = [];
   const $ = id => document.getElementById(id);
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -90,8 +92,9 @@
     return account.role === 'OFFICER' ? 'Officer action needed' : 'Waiting for claims officer';
   }
   function signedOut() {
-    clearInterval(noticeTimer); noticeTimer = undefined; noticeGeneration++; noticeBusy = false;
-    account = null; selected = null; viewedVersion = null; visibleRows = []; cursor = null;
+    clearInterval(refreshTimer); refreshTimer = undefined; noticeGeneration++; noticeBusy = false;
+    dashboardBusy = false; detailDirty = false; summarySnapshot = '';
+    account = null; selected = null; viewedVersion = null; visibleRows = []; cursor = null; retryKeys.clear();
     $('app').hidden = true; $('login').hidden = false; $('detail').hidden = true; $('notices').innerHTML = '';
   }
   const errors = {BAD_CREDENTIALS:'That email and password did not match.', CSRF_INVALID:'Your session expired. Please sign in again.',
@@ -114,6 +117,17 @@
     }
     return result;
   }
+  async function mutate(path, method, body, keyed = false) {
+    const fingerprint = method + ' ' + path + ' ' + JSON.stringify(body);
+    const key = keyed ? retryKeys.get(fingerprint) || crypto.randomUUID() : undefined;
+    if (keyed) retryKeys.set(fingerprint, key);
+    mutationBusy++;
+    try {
+      const result = await api(path, method, body, key);
+      if (keyed) retryKeys.delete(fingerprint);
+      return result;
+    } finally { mutationBusy--; }
+  }
   async function run(action) { try { $('error').textContent = ''; await action(); } catch (error) { $('error').textContent = error.message; } }
   async function signIn(event) {
     event.preventDefault();
@@ -121,7 +135,7 @@
       csrf = (await api('/csrf')).csrfToken;
       const result = await api('/session', 'POST', {email:$('email').value, password:$('password').value});
       csrf = result.csrfToken; account = result.account; $('password').value = '';
-      await refresh(); startNotices();
+      await refresh(); startPolling();
     });
   }
   async function signOut() { await run(async () => { await api('/session', 'DELETE'); signedOut(); }); }
@@ -137,9 +151,19 @@
     catch (error) { /* Claim reads remain available if notice delivery is delayed. */ }
     finally { if (generation === noticeGeneration) noticeBusy = false; }
   }
-  function startNotices() { if (account && !noticeTimer) noticeTimer = setInterval(pollNotices, 5000); }
+  function startPolling() {
+    if (account && !refreshTimer) refreshTimer = setInterval(() => { pollNotices(); pollDashboard(); }, 5000);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { pollNotices(); pollDashboard(); }
+  });
+  for (const eventName of ['input','change']) $('detail').addEventListener(eventName, event => {
+    if (event.target.closest('form')) detailDirty = true;
+  });
   async function refresh() {
-    await run(async () => {
+    if (refreshing) return;
+    refreshing = true;
+    try { await run(async () => {
       const result = await api('/session'); account = result.account; csrf = result.csrfToken;
       $('login').hidden = true; $('app').hidden = false;
       $('role').textContent = account.role === 'CLAIMANT' ? 'Claimant dashboard' : 'Claims officer dashboard';
@@ -148,14 +172,14 @@
       if (account.role === 'OFFICER') await renderSummary(); else $('summary').hidden = true;
       await list(account.role === 'CLAIMANT' ? null : currentView);
       if (selected) await openClaim(selected);
-      startNotices();
-    });
+      startPolling();
+    }); } finally { refreshing = false; }
   }
   function renderReport() {
     $('new').hidden = account.role !== 'CLAIMANT';
     if (account.role !== 'CLAIMANT') return;
     $('new').innerHTML = `<h2>Report a new incident</h2><p class="muted">Your market and currency are ${esc(account.market.code)} / ${esc(account.market.currency)}. You can leave unknown details blank.</p>
-      <form class="stack" onsubmit="report(event)"><div class="fields">
+      <form class="stack" method="post" onsubmit="event.preventDefault(); window.report(event)"><div class="fields">
         <label>Claim type<select name="type"><option value="MOTOR">Motor</option><option value="PROPERTY">Property</option></select></label>
         <label>Incident date<input name="date" type="date" required></label>
         <label>Location<input name="location" maxlength="2000" required></label>
@@ -169,6 +193,9 @@
   }
   async function renderSummary() {
     const result = await api('/officer/team/summary?from=2020-01-01T00:00:00Z&to=2100-01-01T00:00:00Z');
+    const snapshot = JSON.stringify(result);
+    if (summarySnapshot === snapshot && !$('summary').hidden) return;
+    summarySnapshot = snapshot;
     $('summary').hidden = false;
     $('summary').innerHTML = `<h2>Team overview</h2><div class="row">
       <span class="metric"><strong>${result.openCount}</strong>Open work</span>
@@ -189,19 +216,50 @@
     await loadMore();
   }
   async function loadView(view) { await run(async () => { await list(view); selected = null; $('detail').hidden = true; }); }
+  function listPath(limit, pageCursor) {
+    const path = account.role === 'CLAIMANT' ? '/claims' : '/officer/claims?view=' + currentView;
+    return path + (path.includes('?') ? '&' : '?') + 'limit=' + limit + (pageCursor ? '&cursor=' + encodeURIComponent(pageCursor) : '');
+  }
   async function loadMore() {
     await run(async () => {
-      const path = account.role === 'CLAIMANT' ? '/claims' : '/officer/claims?view=' + currentView;
-      const result = await api(path + (path.includes('?') ? '&' : '?') + 'limit=3' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+      const result = await api(listPath(3, cursor));
       visibleRows.push(...result.items); cursor = result.nextCursor;
-      $('claims').innerHTML = visibleRows.length ? visibleRows.map(c => `<div class="item">
+      showRows();
+    });
+  }
+  function showRows() {
+    $('claims').innerHTML = visibleRows.length ? visibleRows.map(c => `<div class="item">
         <div class="row"><button class="link" onclick="openClaim('${c.id}')">${esc(c.reference)}</button>
           <span class="badge ${c.status === 'WAITING_FOR_CLAIMANT' ? 'wait' : ['SETTLED','REJECTED'].includes(c.status) ? 'done' : ''}">${esc(statusName(c))}</span></div>
         <p>${esc(human(c.type))} · ${esc(c.market)} / ${esc(c.currency)}</p>
         <small>${esc(nextStep(c))}${account.role === 'OFFICER' ? ' · ' + (c.assignedOfficerId ? c.assignedOfficerId === account.id ? 'Assigned to you' : 'Assigned to another officer' : 'Unassigned') : ''}</small>
       </div>`).join('') : '<p class="muted">No claims here yet. New claims will appear after they are reported.</p>';
-      $('more').hidden = !cursor;
-    });
+    $('more').hidden = !cursor;
+  }
+  const rowSnapshot = rows => JSON.stringify(rows.map(c => [c.id, c.version, c.status, c.nextActor, c.assignedOfficerId]));
+  async function pollDashboard() {
+    if (!account || dashboardBusy || refreshing || mutationBusy) return;
+    dashboardBusy = true;
+    const generation = noticeGeneration, actor = account.id, view = currentView, claimId = selected;
+    try {
+      const result = await api(listPath(Math.min(100, Math.max(3, visibleRows.length))));
+      if (!account || account.id !== actor || generation !== noticeGeneration || refreshing || mutationBusy) return;
+      if (view === currentView && (rowSnapshot(result.items) !== rowSnapshot(visibleRows) || result.nextCursor !== cursor)) {
+        visibleRows = result.items; cursor = result.nextCursor; showRows();
+      }
+      if (claimId && claimId === selected && !$('detail').hidden) {
+        const latest = (await api('/claims/' + claimId)).claim;
+        if (!account || generation !== noticeGeneration || claimId !== selected || refreshing || mutationBusy) return;
+        if (latest.version !== viewedVersion) {
+          if (detailDirty) {
+            if (!$('pending-update')) $('detail').insertAdjacentHTML('afterbegin',
+              '<p id="pending-update" class="notice" role="status">This claim changed while you were editing. Your draft is kept; use Refresh claims after finishing it.</p>');
+          } else if (!mutationBusy && !refreshing) await openClaim(claimId, latest);
+        }
+      }
+      if (account?.role === 'OFFICER' && generation === noticeGeneration) await renderSummary();
+    } catch (error) { /* The manual Refresh claims button remains available. */ }
+    finally { dashboardBusy = false; }
   }
   function activities(items) {
     const names = {CLAIM_REPORTED:'Claim reported',PICKUP:'Picked up',RELEASE:'Released for handover',
@@ -212,12 +270,12 @@
       ${item.message ? `<p>${esc(item.message)}</p>` : item.details?.reason ? `<p>${esc(item.details.reason)}</p>` : ''}</div>`).join('') : '<p class="muted">No updates yet.</p>';
   }
   function requestCard(r, own) {
-    const answerForm = account.role === 'CLAIMANT' && r.status === 'OPEN' ? `<form class="stack" onsubmit="answer(event,'${r.id}')">
+    const answerForm = account.role === 'CLAIMANT' && r.status === 'OPEN' ? `<form class="stack" method="post" onsubmit="event.preventDefault(); window.submitAnswer(event,'${r.id}')">
       <label>Your answer<textarea name="answer" required></textarea></label><div class="fields">
       <label>Policy reference <small>Optional</small><input name="policy" placeholder="Leave blank to keep current value"></label>
       <label>Requested amount <small>Optional, ${esc(account.market.currency)}</small><input name="requested" inputmode="decimal" placeholder="Leave blank to keep current value"></label></div>
       <button class="primary" type="submit">Send answer</button></form>` : '';
-    const withdrawForm = own && r.status === 'OPEN' ? `<form onsubmit="withdraw(event,'${r.id}')" class="stack">
+    const withdrawForm = own && r.status === 'OPEN' ? `<form method="post" onsubmit="event.preventDefault(); window.withdraw(event,'${r.id}')" class="stack">
       <label>Reason to withdraw<input name="reason" required></label><button type="submit">Withdraw request</button></form>` : '';
     return `<div class="item"><span class="badge ${r.status === 'OPEN' ? 'wait' : 'done'}">${r.status === 'OPEN' ? account.role === 'CLAIMANT' ? 'Your answer needed' : 'Awaiting claimant answer' : human(r.status)}</span>
       <p><strong>${esc(r.question)}</strong></p>${r.answer ? `<p>Answer: ${esc(r.answer)}</p>` : ''}<small>Requested ${esc(when(r.requestedAt))}</small>
@@ -231,13 +289,13 @@
     if (c.status === 'REJECTED' || c.payment?.status === 'PAID') return '';
     const open = c.informationRequests.some(r => r.status === 'OPEN');
     return `<div class="actions"><h3>Work on this claim</h3>
-      <form onsubmit="release(event)" class="stack"><label>Handover reason <small>Required after your first assessment, information request or decision</small>
+      <form method="post" onsubmit="event.preventDefault(); window.release(event)" class="stack"><label>Handover reason <small>Required after your first assessment, information request or decision</small>
         <input name="reason" placeholder="Why are you releasing this claim?"></label><button type="submit">Release to team queue</button></form>
       ${c.decision ? `<p class="muted">The decision is final. A settled, unpaid claim can still be handed over for payment confirmation.</p>
         ${c.payment?.status === 'UNPAID' ? '<button class="primary" onclick="markPaid()">Confirm external payment</button>' : ''}` : `
         ${open ? '<p class="muted">A request is still open. The claimant can answer it, or you can withdraw it before making a decision.</p>' :
-          `<form onsubmit="ask(event)" class="stack"><label>Question for claimant<textarea name="question" required></textarea></label><button type="submit">Request information</button></form>`}
-        <form onsubmit="assess(event)" class="stack"><h3>Assessment (internal)</h3>
+          `<form method="post" onsubmit="event.preventDefault(); window.ask(event)" class="stack"><label>Question for claimant<textarea name="question" required></textarea></label><button type="submit">Request information</button></form>`}
+        <form method="post" onsubmit="event.preventDefault(); window.assess(event)" class="stack"><h3>Assessment (internal)</h3>
           <div class="fields"><label>Apparent coverage<select name="coverage" onchange="if(this.value==='UNKNOWN')this.form.elements.reason.value=''">
             ${Object.entries({UNKNOWN:'Unknown',APPEARS_COVERED:'Appears covered',APPEARS_NOT_COVERED:'Appears not covered'}).map(([value,label]) =>
               `<option value="${value}" ${c.assessment.coverage === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
@@ -245,17 +303,17 @@
             <label>Assessed loss <small>${esc(c.currency)}, blank = unknown</small><input name="loss" inputmode="decimal" value="${esc(c.assessment.assessedLoss || '')}"></label>
             <label>Estimated unpaid <small>${esc(c.currency)}, blank = unknown</small><input name="estimate" inputmode="decimal" value="${esc(c.assessment.estimatedUnpaidAmount || '')}"></label></div>
           <button type="submit">Save assessment</button></form>
-        ${open ? '' : `<form onsubmit="decide(event,'SETTLED')" class="stack"><h3>Offer settlement</h3>
+        ${open ? '' : `<form method="post" onsubmit="event.preventDefault(); window.decide(event,'SETTLED')" class="stack"><h3>Offer settlement</h3>
           <p class="muted">First record apparent covered status and assessed loss above.</p>
           <div class="fields"><label>Settlement amount <small>${esc(c.currency)}</small><input name="amount" inputmode="decimal" required></label>
           <label>Explanation<input name="reason" required></label></div><button type="submit">Settle claim</button></form>
-          <form onsubmit="decide(event,'REJECTED')" class="stack"><h3>Reject claim</h3>
+          <form method="post" onsubmit="event.preventDefault(); window.decide(event,'REJECTED')" class="stack"><h3>Reject claim</h3>
           <label>Reason for rejection<input name="reason" required></label><button type="submit">Reject claim</button></form>`}`}
       </div>`;
   }
-  async function openClaim(id) {
+  async function openClaim(id, cachedClaim) {
     await run(async () => {
-      const c = (await api('/claims/' + id)).claim;
+      const c = cachedClaim || (await api('/claims/' + id)).claim;
       const history = (await api('/claims/' + id + '/activity?limit=100')).items;
       selected = id; viewedVersion = c.version;
       const own = account.role === 'OFFICER' && c.assignedOfficerId === account.id;
@@ -276,23 +334,24 @@
           ${c.payment ? `<p><strong>Payment:</strong> ${c.payment.status === 'PAID' ? `Confirmed ${esc(when(c.payment.confirmedAt))}` : 'Not yet confirmed'}</p>` : ''}` : ''}
         <h3>Information requests</h3>${c.informationRequests.length ? c.informationRequests.map(r => requestCard(r,own)).join('') : '<p class="muted">No information requested.</p>'}
         ${actions(c,own)}<h3>${officer ? 'Claim activity' : 'Your claim progress'}</h3>${activities(history)}`;
+      detailDirty = false;
     });
   }
   async function send(operation, body, method = 'POST', keyed = false) {
-    await run(async () => { await api('/claims/' + selected + '/' + operation, method, body, keyed ? crypto.randomUUID() : undefined); await refresh(); });
+    await run(async () => { await mutate('/claims/' + selected + '/' + operation, method, body, keyed); await refresh(); });
   }
   async function report(event) {
     event.preventDefault(); const form = event.target, values = new FormData(form);
     await run(async () => {
-      const result = await api('/claims','POST',{type:values.get('type'),incident:{date:values.get('date'),location:values.get('location'),
+      const result = await mutate('/claims','POST',{type:values.get('type'),incident:{date:values.get('date'),location:values.get('location'),
         description:values.get('description'),affectedAsset:values.get('asset')},policyReference:values.get('policy') || null,
-        requestedAmount:values.get('requested') || null},crypto.randomUUID());
+        requestedAmount:values.get('requested') || null},true);
       selected = result.claim.id; await refresh();
     });
   }
   async function act(name, body) { await send(name,body); }
   async function ask(event) { event.preventDefault(); await send('information-requests',{question:new FormData(event.target).get('question')},'POST',true); }
-  async function answer(event, id) {
+  async function submitAnswer(event, id) {
     event.preventDefault(); const values = new FormData(event.target); const body = {answer:values.get('answer')};
     if (values.get('policy')) body.policyReference = values.get('policy');
     if (values.get('requested')) body.requestedAmount = values.get('requested');
@@ -308,12 +367,14 @@
   async function decide(event, kind) {
     event.preventDefault(); const values = new FormData(event.target);
     await run(async () => {
-      await api('/claims/' + selected + '/decision','POST',{kind,amount:kind === 'SETTLED' ? values.get('amount') : null,
-        reason:values.get('reason'),reviewedVersion:viewedVersion},crypto.randomUUID());
+      await mutate('/claims/' + selected + '/decision','POST',{kind,amount:kind === 'SETTLED' ? values.get('amount') : null,
+        reason:values.get('reason'),reviewedVersion:viewedVersion},true);
       await refresh();
     });
   }
   async function markPaid() { if (confirm('Confirm that payment was completed outside this app?')) await send('mark-paid',{}); }
+  if (['answer','policy','requested','password'].some(name => new URLSearchParams(location.search).has(name)))
+    history.replaceState(null, '', location.pathname + location.hash);
   (async () => {
     try { csrf = (await api('/csrf')).csrfToken; const result = await api('/session'); account = result.account; await refresh(); }
     catch (error) { signedOut(); $('error').textContent = ''; }
