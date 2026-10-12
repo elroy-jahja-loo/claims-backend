@@ -77,7 +77,11 @@ public class Application {
     };
   }
   static void seed(JdbcTemplate db,PasswordEncoder enc,String email,String role,String market,UUID team,String password) {
-    db.update("insert into accounts(id,email,password,role,market,team_id) values (?,?,?,?,?,?) on conflict(email) do nothing",
+    if(password.isBlank()) throw new IllegalStateException("Seed credential must not be empty");
+    var existing=db.queryForList("select password from accounts where email=?",email);
+    if(!existing.isEmpty() && enc.matches(password,(String)existing.getFirst().get("password"))) return;
+    // The persistent local credential is the source of truth; keep claim/account IDs unchanged.
+    db.update("insert into accounts(id,email,password,role,market,team_id) values (?,?,?,?,?,?) on conflict(email) do update set password=excluded.password",
       UUID.nameUUIDFromBytes(email.getBytes()),email,enc.encode(password),role,market,team);
   }
   static void constraint(JdbcTemplate db,String table,String name,String definition) {

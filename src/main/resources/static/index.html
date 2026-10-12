@@ -1,34 +1,323 @@
-<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Claims dashboard</title>
-<style>body{font:16px system-ui;max-width:900px;margin:2rem auto;padding:0 1rem}button,input,select,textarea{font:inherit;margin:.3rem;padding:.3rem}textarea{width:95%}article{border:1px solid #aaa;padding:1rem;margin:1rem 0}pre{white-space:pre-wrap;overflow-wrap:anywhere}button{cursor:pointer}</style>
-<h1>Claims dashboard</h1><div id="login"><input id="email" type="email" placeholder="Email"><input id="password" type="password" placeholder="Password"><button onclick="signIn()">Sign in</button></div>
-<div id="app" hidden><p id="who"></p><button onclick="refresh()">Refresh</button><button onclick="signOut()">Sign out</button><h2>Notices</h2><div id="notices"></div><div id="new"></div><div id="summary"></div><h2>Claims</h2><div id="filters"></div><div id="claims"></div><div id="detail"></div></div><p id="error" role="alert"></p>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claims workspace</title>
+  <style>
+    :root { font: 16px/1.5 system-ui, sans-serif; color: #18283b; background: #f3f6fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { background: #123050; color: white; padding: 1.2rem max(1rem, calc((100vw - 1160px)/2)); }
+    header h1 { margin: 0; font-size: 1.55rem; }
+    header p { margin: .2rem 0 0; color: #d5e6f4; }
+    main { max-width: 1160px; margin: 1.5rem auto; padding: 0 1rem 3rem; }
+    .grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 1.2rem; align-items: start; }
+    .card { background: white; border: 1px solid #dce4ee; border-radius: 12px; padding: 1.25rem; margin-bottom: 1.2rem; box-shadow: 0 2px 9px #1230500a; }
+    h2 { font-size: 1.2rem; margin: 0 0 .8rem; }
+    h3 { font-size: 1rem; margin: 1.2rem 0 .5rem; }
+    p { margin: .4rem 0; }
+    .muted, small { color: #51637a; }
+    .row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .7rem; }
+    .stack { display: grid; gap: .8rem; }
+    .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+    label { display: grid; gap: .25rem; font-weight: 600; font-size: .9rem; }
+    input, select, textarea { width: 100%; padding: .65rem .7rem; font: inherit; border: 1px solid #aebdcd; border-radius: 7px; color: #18283b; background: white; }
+    textarea { min-height: 75px; resize: vertical; }
+    button { cursor: pointer; font: inherit; font-weight: 600; padding: .55rem .85rem; border: 1px solid #245783; border-radius: 7px; color: #17446d; background: white; }
+    button:hover, button:focus-visible { background: #e9f3fc; }
+    button.primary { background: #155a90; color: white; }
+    button.primary:hover { background: #0d436d; }
+    .buttons { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
+    .badge { display: inline-block; padding: .18rem .55rem; border-radius: 100px; font-size: .82rem; font-weight: 700; color: #21517c; background: #e5f1fb; }
+    .badge.wait { color: #77500b; background: #fff0ce; }
+    .badge.done { color: #176144; background: #def5e9; }
+    .item { border-top: 1px solid #e4eaf0; padding: .85rem 0; }
+    .item:first-child { border-top: 0; }
+    .item button.link { border: 0; padding: 0; text-align: left; color: #135b94; background: transparent; text-decoration: underline; }
+    .item button.link:hover { color: #0c416c; }
+    .notice { border-left: 3px solid #60a3d7; padding: .55rem .7rem; margin: .6rem 0; background: #f3f8fd; }
+    .metric { display: inline-block; margin: .3rem .8rem .3rem 0; }
+    .metric strong { display: block; font-size: 1.45rem; }
+    .actions { padding-top: .7rem; border-top: 1px solid #e4eaf0; }
+    .actions form { border-top: 1px solid #e4eaf0; margin-top: 1rem; padding-top: 1rem; }
+    #error:not(:empty) { color: #8c2525; background: #fff0f0; border: 1px solid #e9c0c0; border-radius: 7px; padding: .7rem; margin-bottom: 1rem; }
+    [hidden] { display: none !important; }
+    @media (max-width: 760px) { .grid, .fields { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<header><h1>Claims workspace</h1><p>Report, review and follow your claims</p></header>
+<main>
+  <div id="error" role="alert"></div>
+  <section id="login" class="card" style="max-width:480px">
+    <h2>Sign in</h2>
+    <p class="muted">Use your pre-created claimant or claims officer account.</p>
+    <form class="stack" onsubmit="signIn(event)">
+      <label>Email<input id="email" type="email" autocomplete="username" required></label>
+      <label>Password<input id="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+  </section>
+  <div id="app" hidden>
+    <section class="card row"><div><strong id="role"></strong><p id="who" class="muted"></p></div><div class="buttons"><button onclick="refresh()">Refresh claims</button><button onclick="signOut()">Sign out</button></div></section>
+    <div class="grid">
+      <div>
+        <section id="new" class="card" hidden></section>
+        <section class="card"><div class="row"><h2 id="list-heading">Claims</h2><span class="muted">Newest first</span></div><div id="filters" class="buttons"></div><div id="claims"></div><button id="more" onclick="loadMore()" hidden>Show more claims</button></section>
+        <section id="detail" class="card" hidden></section>
+      </div>
+      <aside>
+        <section class="card"><h2>Updates</h2><p class="muted">New notices appear here automatically. Click one for the latest claim details.</p><div id="notices"></div></section>
+        <section id="summary" class="card" hidden></section>
+      </aside>
+    </div>
+  </div>
+</main>
 <script>
-let csrf,account,selected,noticeTimer,noticeBusy=false,noticeGeneration=0;
-const $=id=>document.getElementById(id),escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function signedOut(){clearInterval(noticeTimer);noticeTimer=undefined;noticeGeneration++;noticeBusy=false;account=null;selected=null;$('app').hidden=true;$('login').hidden=false;$('detail').innerHTML='';$('notices').innerHTML=''}
-function showNotices(items){$('notices').innerHTML=items.map(n=>`<p>${escape(n.type)}: <button onclick="openClaim('${n.claimId}')">${escape(n.claimReference)}</button></p>`).join('')||'No delivered notices'}
-async function pollNotices(){if(!account||noticeBusy)return;noticeBusy=true;let generation=noticeGeneration;try{let items=(await api('/notifications?limit=100')).items;if(account&&generation===noticeGeneration)showNotices(items)}catch(e){}finally{if(generation===noticeGeneration)noticeBusy=false}}
-function startNotices(){if(account&&!noticeTimer)noticeTimer=setInterval(pollNotices,5000)}
-async function api(path,method='GET',data,key){let r=await fetch('/api'+path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf,'Idempotency-Key':key||crypto.randomUUID()},body:data===undefined?undefined:JSON.stringify(data)});let v=r.status===204?{}:await r.json();if(!r.ok){let code=v.error?.code||r.status;if(code==='AUTH_REQUIRED'&&account)signedOut();throw Error(code)}return v}
-async function run(fn){try{$('error').textContent='';await fn()}catch(e){$('error').textContent=e.message}}
-async function signIn(){await run(async()=>{csrf=(await api('/csrf')).csrfToken;let v=await api('/session','POST',{email:$('email').value,password:$('password').value});csrf=v.csrfToken;account=v.account;$('password').value='';startNotices();await refresh()})}
-async function signOut(){await run(async()=>{await api('/session','DELETE');signedOut()})}
-async function refresh(){await run(async()=>{let v=await api('/session');account=v.account;csrf=v.csrfToken;$('login').hidden=true;$('app').hidden=false;$('who').textContent=account.email+' · '+(account.market?account.market.code+' / '+account.market.currency:'Officer team '+account.teamId);await pollNotices();if(!account)return;
-if(account.role==='CLAIMANT'){$('filters').innerHTML='';$('summary').innerHTML='';$('new').innerHTML=`<h2>Report incident</h2><p>${escape(account.market.code)} / ${escape(account.market.currency)}</p><select id="type"><option>MOTOR</option><option>PROPERTY</option></select><input id="date" type="date"><input id="location" placeholder="Location"><input id="asset" placeholder="Affected asset"><textarea id="description" placeholder="What happened?"></textarea><input id="policy" placeholder="Policy reference (optional)"><input id="requested" placeholder="Requested amount (optional)"><button onclick="report()">Report</button>`;$('date').value=new Date().toISOString().slice(0,10)}else{$('new').innerHTML='';$('filters').innerHTML=['unassigned','mine','waiting','team'].map(f=>`<button onclick="list('${f}')">${f}</button>`).join('');let s=await api('/officer/team/summary?from=2020-01-01T00:00:00Z&to=2100-01-01T00:00:00Z');$('summary').innerHTML=`<h2>Team measures</h2><p>Open ${s.openCount} · Decided ${s.decidedCount} · Resolved ${s.resolvedCount} · Period decisions ${s.decisionCount} · Mean seconds ${s.meanTimeToDecisionSeconds??'—'}</p>`+s.exposureByCurrency.map(x=>`<p>${escape(x.currency)}: known ${escape(x.knownOutstandingTotal)}; unknown claims ${x.unknownClaimCount}; total claims ${x.claimCount}${x.incomplete?' (incomplete)':''}</p>`).join('')}
-await list(account.role==='CLAIMANT'?null:'unassigned');if(selected)await openClaim(selected);startNotices()})}
-async function list(view){await run(async()=>{let v=await api(view?'/officer/claims?view='+view+'&limit=100':'/claims?limit=100');$('claims').innerHTML=v.items.map(c=>`<article><button onclick="openClaim('${c.id}')">${escape(c.reference)}</button> ${escape(c.type)} · ${escape(c.market)} / ${escape(c.currency)} · ${escape(c.status)} · next ${escape(c.nextActor)}</article>`).join('')||'No claims'})}
-async function openClaim(id){await run(async()=>{selected=id;let c=(await api('/claims/'+id)).claim;let history=(await api('/claims/'+id+'/activity?limit=100')).items;let actions='';if(account.role==='OFFICER'){
-if(!c.assignedOfficerId&&c.status!=='REJECTED'&&c.payment?.status!=='PAID')actions+='<button onclick="action(\'pickup\',{})">Pick up</button>';
-if(c.assignedOfficerId===account.id){if(c.status!=='REJECTED'&&c.payment?.status!=='PAID')actions+='<button onclick="action(\'release\',{reason:prompt(\'Release reason (optional before substantive work)\')})">Release</button>';
-if(!c.decision){actions+='<button onclick="action(\'information-requests\',{question:prompt(\'Question for claimant\')})">Request information</button><button onclick="assess()">Assess</button><button onclick="decide(\'SETTLED\')">Settle</button><button onclick="decide(\'REJECTED\')">Reject</button>';
-for(let r of c.informationRequests.filter(r=>r.status==='OPEN'))actions+=`<button onclick="action('information-requests/${r.id}/withdraw',{reason:prompt('Withdrawal reason')})">Withdraw request</button>`}
-if(c.payment?.status==='UNPAID')actions+='<button onclick="action(\'mark-paid\',{})">Confirm external payment</button>'}}
-else for(let r of c.informationRequests.filter(r=>r.status==='OPEN'))actions+=`<button onclick="answer('${r.id}')">Answer request</button>`;
-$('detail').innerHTML=`<h2>${escape(c.reference)}</h2><p>${escape(c.status)} · next ${escape(c.nextActor)} · ${escape(c.market)} / ${escape(c.currency)}</p><p>Incident: ${escape(c.incident.date)} · ${escape(c.incident.location)} · ${escape(c.incident.description)} · ${escape(c.incident.affectedAsset)}</p><p>Policy: ${escape(c.policyReference||'not provided')} · Requested: ${escape(c.requestedAmount||'not provided')}</p><p>Decision: ${escape(c.decision?JSON.stringify(c.decision):'pending')} · Payment: ${escape(c.payment?JSON.stringify(c.payment):'not applicable')}</p>${account.role==='OFFICER'?`<p>Assessment: ${escape(JSON.stringify(c.assessment))} · Exposure: ${escape(JSON.stringify(c.exposure))}</p>`:''}<h3>Requests</h3>${c.informationRequests.map(r=>`<p>${escape(r.question)} · ${escape(r.status)} · ${escape(r.answer||'')}</p>`).join('')}${actions}<h3>Progress</h3>${history.map(h=>`<p>${escape(h.type)} · ${escape(h.occurredAt)} · ${escape(h.message||JSON.stringify(h.details))}</p>`).join('')}`})}
-async function report(){await run(async()=>{let body={type:$('type').value,incident:{date:$('date').value,location:$('location').value,description:$('description').value,affectedAsset:$('asset').value},policyReference:$('policy').value||null,requestedAmount:$('requested').value||null};let v=await api('/claims','POST',body);selected=v.claim.id;await refresh()})}
-async function action(op,data){if(Object.values(data).some(x=>x===null)&&op.includes('withdraw'))return;await run(async()=>{let keyed=['information-requests','decision'].includes(op)||op.endsWith('/answer');await api('/claims/'+selected+'/'+op,'POST',data,keyed?crypto.randomUUID():undefined);await refresh()})}
-async function answer(id){let answer=prompt('Answer');if(!answer)return;let policy=prompt('Policy reference (leave blank to keep current)');let amount=prompt('Requested amount (leave blank to keep current)');let data={answer};if(policy)data.policyReference=policy;if(amount)data.requestedAmount=amount;await action('information-requests/'+id+'/answer',data)}
-async function assess(){let c=(await api('/claims/'+selected)).claim;let coverage=prompt('Coverage: UNKNOWN, APPEARS_COVERED, APPEARS_NOT_COVERED',c.assessment.coverage);if(!coverage)return;let reason=coverage==='UNKNOWN'?null:prompt('Coverage reason',c.assessment.reason||'');let loss=prompt('Assessed loss (blank = unknown)',c.assessment.assessedLoss||'');let estimate=prompt('Estimated unpaid (blank = unknown)',c.assessment.estimatedUnpaidAmount||'');await run(async()=>{await api('/claims/'+selected+'/assessment','PUT',{coverage,reason,assessedLoss:loss||null,estimatedUnpaidAmount:estimate||null});await refresh()})}
-async function decide(kind){let c=(await api('/claims/'+selected)).claim;let amount=kind==='SETTLED'?prompt('Settlement amount'):null;if(kind==='SETTLED'&&!amount)return;let reason=prompt('Decision explanation');if(!reason)return;await action('decision',{kind,amount,reason,reviewedVersion:c.version})}
-run(async()=>{csrf=(await api('/csrf')).csrfToken;await refresh();if(!account)$('error').textContent=''});
-</script></html>
+  let csrf, account, selected, viewedVersion, noticeTimer, noticeBusy = false, noticeGeneration = 0;
+  let currentView = 'unassigned', cursor = null, visibleRows = [];
+  const $ = id => document.getElementById(id);
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+  const human = code => String(code || '').toLowerCase().replaceAll('_', ' ').replace(/^./, c => c.toUpperCase());
+  const money = (amount, currency) => amount == null ? 'Not yet known' : `${esc(currency)} ${esc(amount)}`;
+  const when = value => value ? new Date(value).toLocaleString() : '';
+  const statusName = c => c.status === 'SETTLED' ? (c.payment?.status === 'PAID' || c.nextActor === 'NONE' ? 'Settled and paid' : 'Settled, awaiting payment') :
+    ({REPORTED:'Reported', UNDER_REVIEW:'Under review', WAITING_FOR_CLAIMANT:'Waiting for information', REJECTED:'Rejected'}[c.status] || human(c.status));
+  function nextStep(c) {
+    if (c.nextActor === 'NONE') return 'No action needed';
+    if (c.nextActor === 'CLAIMANT') return account.role === 'CLAIMANT' ? 'Your answer is needed' : 'Waiting for claimant';
+    return account.role === 'OFFICER' ? 'Officer action needed' : 'Waiting for claims officer';
+  }
+  function signedOut() {
+    clearInterval(noticeTimer); noticeTimer = undefined; noticeGeneration++; noticeBusy = false;
+    account = null; selected = null; viewedVersion = null; visibleRows = []; cursor = null;
+    $('app').hidden = true; $('login').hidden = false; $('detail').hidden = true; $('notices').innerHTML = '';
+  }
+  const errors = {BAD_CREDENTIALS:'That email and password did not match.', CSRF_INVALID:'Your session expired. Please sign in again.',
+    FORBIDDEN:'You may view this claim but cannot change it.', NOT_FOUND:'This claim is not available to your account.',
+    OPEN_REQUEST:'Answer or withdraw the open request before deciding.', MISSING_ASSESSMENT:'Record covered assessment and assessed loss before settling.',
+    STALE_VERSION:'This claim changed. Refresh it before making a decision.', REASON_REQUIRED:'Enter a reason for this handover.',
+    INVALID_INPUT:'Check the form values and try again.'};
+  async function api(path, method = 'GET', data, key) {
+    const headers = {Accept:'application/json'};
+    if (data !== undefined) headers['Content-Type'] = 'application/json';
+    if (csrf && method !== 'GET') headers['X-CSRF-Token'] = csrf;
+    if (key) headers['Idempotency-Key'] = key;
+    const response = await fetch('/api' + path, {method, credentials:'same-origin', headers,
+      body:data === undefined ? undefined : JSON.stringify(data)});
+    const result = response.status === 204 ? {} : await response.json();
+    if (!response.ok) {
+      const code = result.error?.code || String(response.status);
+      if (code === 'AUTH_REQUIRED' && account) signedOut();
+      throw Error(errors[code] || (code === 'AUTH_REQUIRED' ? 'Please sign in.' : human(code)));
+    }
+    return result;
+  }
+  async function run(action) { try { $('error').textContent = ''; await action(); } catch (error) { $('error').textContent = error.message; } }
+  async function signIn(event) {
+    event.preventDefault();
+    await run(async () => {
+      csrf = (await api('/csrf')).csrfToken;
+      const result = await api('/session', 'POST', {email:$('email').value, password:$('password').value});
+      csrf = result.csrfToken; account = result.account; $('password').value = '';
+      await refresh(); startNotices();
+    });
+  }
+  async function signOut() { await run(async () => { await api('/session', 'DELETE'); signedOut(); }); }
+  function showNotices(items) {
+    const names = {REQUESTED:'Information requested', ANSWERED:'Claimant answered', DECIDED:'Decision available'};
+    $('notices').innerHTML = items.length ? items.map(n => `<div class="notice"><strong>${names[n.type] || human(n.type)}</strong><br>
+      <button class="link" onclick="openClaim('${n.claimId}')">${esc(n.claimReference)}</button><br><small>${esc(when(n.occurredAt))}</small></div>`).join('') : '<p class="muted">No updates yet.</p>';
+  }
+  async function pollNotices() {
+    if (!account || noticeBusy) return;
+    noticeBusy = true; const generation = noticeGeneration;
+    try { const result = await api('/notifications?limit=20'); if (account && generation === noticeGeneration) showNotices(result.items); }
+    catch (error) { /* Claim reads remain available if notice delivery is delayed. */ }
+    finally { if (generation === noticeGeneration) noticeBusy = false; }
+  }
+  function startNotices() { if (account && !noticeTimer) noticeTimer = setInterval(pollNotices, 5000); }
+  async function refresh() {
+    await run(async () => {
+      const result = await api('/session'); account = result.account; csrf = result.csrfToken;
+      $('login').hidden = true; $('app').hidden = false;
+      $('role').textContent = account.role === 'CLAIMANT' ? 'Claimant dashboard' : 'Claims officer dashboard';
+      $('who').textContent = `${account.email} · ${account.market ? `${account.market.code} / ${account.market.currency}` : 'Your team'}`;
+      renderReport(); await pollNotices();
+      if (account.role === 'OFFICER') await renderSummary(); else $('summary').hidden = true;
+      await list(account.role === 'CLAIMANT' ? null : currentView);
+      if (selected) await openClaim(selected);
+      startNotices();
+    });
+  }
+  function renderReport() {
+    $('new').hidden = account.role !== 'CLAIMANT';
+    if (account.role !== 'CLAIMANT') return;
+    $('new').innerHTML = `<h2>Report a new incident</h2><p class="muted">Your market and currency are ${esc(account.market.code)} / ${esc(account.market.currency)}. You can leave unknown details blank.</p>
+      <form class="stack" onsubmit="report(event)"><div class="fields">
+        <label>Claim type<select name="type"><option value="MOTOR">Motor</option><option value="PROPERTY">Property</option></select></label>
+        <label>Incident date<input name="date" type="date" required></label>
+        <label>Location<input name="location" maxlength="2000" required></label>
+        <label>Affected vehicle or property<input name="asset" maxlength="2000" required></label></div>
+        <label>What happened?<textarea name="description" maxlength="2000" required></textarea></label>
+        <div class="fields"><label>Policy reference <small>Optional</small><input name="policy" maxlength="2000" placeholder="Leave blank if unknown"></label>
+        <label>Requested amount <small>Optional, ${esc(account.market.currency)}</small><input name="requested" inputmode="decimal" placeholder="Leave blank if unknown"></label></div>
+        <button class="primary" type="submit">Report claim</button></form>`;
+    const now = new Date();
+    $('new').querySelector('[name="date"]').value = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0,10);
+  }
+  async function renderSummary() {
+    const result = await api('/officer/team/summary?from=2020-01-01T00:00:00Z&to=2100-01-01T00:00:00Z');
+    $('summary').hidden = false;
+    $('summary').innerHTML = `<h2>Team overview</h2><div class="row">
+      <span class="metric"><strong>${result.openCount}</strong>Open work</span>
+      <span class="metric"><strong>${result.decidedCount}</strong>Decided</span>
+      <span class="metric"><strong>${result.resolvedCount}</strong>Resolved</span></div>
+      <h3>Known unpaid exposure</h3>${result.exposureByCurrency.length ? result.exposureByCurrency.map(r =>
+        `<p><strong>${money(r.knownOutstandingTotal,r.currency)}</strong> · ${r.claimCount} claim${r.claimCount === 1 ? '' : 's'}</p>
+        ${r.unknownClaimCount ? `<p class="muted">${r.unknownClaimCount} claim${r.unknownClaimCount === 1 ? '' : 's'} with unknown exposure; the total is incomplete.</p>` : ''}`).join('') : '<p class="muted">No claims yet.</p>'}
+      <p class="muted">${result.decisionCount} decisions in the reporting period · average time to decide: ${result.meanTimeToDecisionSeconds == null ? 'Not available' : `${Math.round(result.meanTimeToDecisionSeconds / 3600 * 10) / 10} hours`}</p>`;
+  }
+  async function list(view) {
+    if (!account) return;
+    currentView = view || 'unassigned'; cursor = null; visibleRows = [];
+    $('list-heading').textContent = account.role === 'CLAIMANT' ? 'My claims' : 'Team claims';
+    $('filters').innerHTML = account.role === 'CLAIMANT' ? '' :
+      Object.entries({unassigned:'Available',mine:'Assigned to me',waiting:'Waiting for claimant',team:'All team claims'})
+        .map(([value,label]) => `<button ${currentView === value ? 'class="primary"' : ''} onclick="loadView('${value}')">${label}</button>`).join('');
+    await loadMore();
+  }
+  async function loadView(view) { await run(async () => { await list(view); selected = null; $('detail').hidden = true; }); }
+  async function loadMore() {
+    await run(async () => {
+      const path = account.role === 'CLAIMANT' ? '/claims' : '/officer/claims?view=' + currentView;
+      const result = await api(path + (path.includes('?') ? '&' : '?') + 'limit=3' + (cursor ? '&cursor=' + encodeURIComponent(cursor) : ''));
+      visibleRows.push(...result.items); cursor = result.nextCursor;
+      $('claims').innerHTML = visibleRows.length ? visibleRows.map(c => `<div class="item">
+        <div class="row"><button class="link" onclick="openClaim('${c.id}')">${esc(c.reference)}</button>
+          <span class="badge ${c.status === 'WAITING_FOR_CLAIMANT' ? 'wait' : ['SETTLED','REJECTED'].includes(c.status) ? 'done' : ''}">${esc(statusName(c))}</span></div>
+        <p>${esc(human(c.type))} · ${esc(c.market)} / ${esc(c.currency)}</p>
+        <small>${esc(nextStep(c))}${account.role === 'OFFICER' ? ' · ' + (c.assignedOfficerId ? c.assignedOfficerId === account.id ? 'Assigned to you' : 'Assigned to another officer' : 'Unassigned') : ''}</small>
+      </div>`).join('') : '<p class="muted">No claims here yet. New claims will appear after they are reported.</p>';
+      $('more').hidden = !cursor;
+    });
+  }
+  function activities(items) {
+    const names = {CLAIM_REPORTED:'Claim reported',PICKUP:'Picked up',RELEASE:'Released for handover',
+      INFORMATION_REQUESTED:'Information requested',INFORMATION_RECEIVED:'Information received',REQUEST_WITHDRAWN:'Request withdrawn',
+      ASSESSMENT:'Assessment updated',DECISION:'Decision recorded',DECISION_AVAILABLE:'Decision available',MARK_PAID:'Payment confirmed',PAYMENT_CONFIRMED:'Payment confirmed'};
+    return items.length ? items.map(item => `<div class="item"><strong>${names[item.type] || human(item.type)}</strong>
+      <small> · ${esc(when(item.occurredAt))}</small>
+      ${item.message ? `<p>${esc(item.message)}</p>` : item.details?.reason ? `<p>${esc(item.details.reason)}</p>` : ''}</div>`).join('') : '<p class="muted">No updates yet.</p>';
+  }
+  function requestCard(r, own) {
+    const answerForm = account.role === 'CLAIMANT' && r.status === 'OPEN' ? `<form class="stack" onsubmit="answer(event,'${r.id}')">
+      <label>Your answer<textarea name="answer" required></textarea></label><div class="fields">
+      <label>Policy reference <small>Optional</small><input name="policy" placeholder="Leave blank to keep current value"></label>
+      <label>Requested amount <small>Optional, ${esc(account.market.currency)}</small><input name="requested" inputmode="decimal" placeholder="Leave blank to keep current value"></label></div>
+      <button class="primary" type="submit">Send answer</button></form>` : '';
+    const withdrawForm = own && r.status === 'OPEN' ? `<form onsubmit="withdraw(event,'${r.id}')" class="stack">
+      <label>Reason to withdraw<input name="reason" required></label><button type="submit">Withdraw request</button></form>` : '';
+    return `<div class="item"><span class="badge ${r.status === 'OPEN' ? 'wait' : 'done'}">${r.status === 'OPEN' ? account.role === 'CLAIMANT' ? 'Your answer needed' : 'Awaiting claimant answer' : human(r.status)}</span>
+      <p><strong>${esc(r.question)}</strong></p>${r.answer ? `<p>Answer: ${esc(r.answer)}</p>` : ''}<small>Requested ${esc(when(r.requestedAt))}</small>
+      ${answerForm}${withdrawForm}</div>`;
+  }
+  function actions(c, own) {
+    if (account.role !== 'OFFICER') return '';
+    if (!c.assignedOfficerId && c.status !== 'REJECTED' && c.payment?.status !== 'PAID')
+      return '<div class="actions"><h3>Next step</h3><p class="muted">This claim is available to your team.</p><button class="primary" onclick="act(\'pickup\',{})">Pick up claim</button></div>';
+    if (!own) return '<div class="actions"><p class="muted">Another officer owns this claim. You can read it, but cannot change it.</p></div>';
+    if (c.status === 'REJECTED' || c.payment?.status === 'PAID') return '';
+    const open = c.informationRequests.some(r => r.status === 'OPEN');
+    return `<div class="actions"><h3>Work on this claim</h3>
+      <form onsubmit="release(event)" class="stack"><label>Handover reason <small>Required after your first assessment, information request or decision</small>
+        <input name="reason" placeholder="Why are you releasing this claim?"></label><button type="submit">Release to team queue</button></form>
+      ${c.decision ? `<p class="muted">The decision is final. A settled, unpaid claim can still be handed over for payment confirmation.</p>
+        ${c.payment?.status === 'UNPAID' ? '<button class="primary" onclick="markPaid()">Confirm external payment</button>' : ''}` : `
+        ${open ? '<p class="muted">A request is still open. The claimant can answer it, or you can withdraw it before making a decision.</p>' :
+          `<form onsubmit="ask(event)" class="stack"><label>Question for claimant<textarea name="question" required></textarea></label><button type="submit">Request information</button></form>`}
+        <form onsubmit="assess(event)" class="stack"><h3>Assessment (internal)</h3>
+          <div class="fields"><label>Apparent coverage<select name="coverage" onchange="if(this.value==='UNKNOWN')this.form.elements.reason.value=''">
+            ${Object.entries({UNKNOWN:'Unknown',APPEARS_COVERED:'Appears covered',APPEARS_NOT_COVERED:'Appears not covered'}).map(([value,label]) =>
+              `<option value="${value}" ${c.assessment.coverage === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+            <label>Coverage reason<input name="reason" value="${esc(c.assessment.reason || '')}" placeholder="Required unless coverage is unknown"></label>
+            <label>Assessed loss <small>${esc(c.currency)}, blank = unknown</small><input name="loss" inputmode="decimal" value="${esc(c.assessment.assessedLoss || '')}"></label>
+            <label>Estimated unpaid <small>${esc(c.currency)}, blank = unknown</small><input name="estimate" inputmode="decimal" value="${esc(c.assessment.estimatedUnpaidAmount || '')}"></label></div>
+          <button type="submit">Save assessment</button></form>
+        ${open ? '' : `<form onsubmit="decide(event,'SETTLED')" class="stack"><h3>Offer settlement</h3>
+          <p class="muted">First record apparent covered status and assessed loss above.</p>
+          <div class="fields"><label>Settlement amount <small>${esc(c.currency)}</small><input name="amount" inputmode="decimal" required></label>
+          <label>Explanation<input name="reason" required></label></div><button type="submit">Settle claim</button></form>
+          <form onsubmit="decide(event,'REJECTED')" class="stack"><h3>Reject claim</h3>
+          <label>Reason for rejection<input name="reason" required></label><button type="submit">Reject claim</button></form>`}`}
+      </div>`;
+  }
+  async function openClaim(id) {
+    await run(async () => {
+      const c = (await api('/claims/' + id)).claim;
+      const history = (await api('/claims/' + id + '/activity?limit=100')).items;
+      selected = id; viewedVersion = c.version;
+      const own = account.role === 'OFFICER' && c.assignedOfficerId === account.id;
+      const officer = account.role === 'OFFICER';
+      $('detail').hidden = false;
+      $('detail').innerHTML = `<div class="row"><div><h2>Claim ${esc(c.reference)}</h2><p class="muted">${esc(human(c.type))} · ${esc(c.market)} / ${esc(c.currency)} · Reported ${esc(when(c.reportedAt))}</p></div>
+        <span class="badge ${c.status === 'WAITING_FOR_CLAIMANT' ? 'wait' : ['SETTLED','REJECTED'].includes(c.status) ? 'done' : ''}">${esc(statusName(c))}</span></div>
+        <p><strong>Next:</strong> ${esc(nextStep(c))}</p>
+        <h3>Incident</h3><p>${esc(c.incident.description)}</p><p class="muted">${esc(c.incident.date)} · ${esc(c.incident.location)} · ${esc(c.incident.affectedAsset)}</p>
+        <div class="fields"><p><strong>Policy reference</strong><br>${c.policyReference ? esc(c.policyReference) : 'Not provided'}</p>
+          <p><strong>Requested amount</strong><br>${c.requestedAmount == null ? 'Not provided' : money(c.requestedAmount,c.currency)}</p></div>
+        ${officer ? `<h3>Officer review</h3><p>Owner: ${c.assignedOfficerId ? own ? 'You' : 'Another team officer' : 'Unassigned'}</p>
+          <p>Coverage: ${esc(human(c.assessment.coverage))}${c.assessment.reason ? ` — ${esc(c.assessment.reason)}` : ''}</p>
+          <p>Assessed loss: ${money(c.assessment.assessedLoss,c.currency)} · Estimated unpaid: ${money(c.assessment.estimatedUnpaidAmount,c.currency)}</p>
+          <p><strong>Current unpaid exposure:</strong> ${c.exposure.known ? money(c.exposure.amount,c.currency) : 'Unknown; not zero'}</p>` : ''}
+        ${c.decision ? `<h3>Decision</h3><p><strong>${c.decision.kind === 'SETTLED' ? 'Settled' : 'Rejected'}</strong>
+          ${c.decision.amount != null ? ' · ' + money(c.decision.amount,c.currency) : ''}</p><p>${esc(c.decision.reason)}</p>
+          ${c.payment ? `<p><strong>Payment:</strong> ${c.payment.status === 'PAID' ? `Confirmed ${esc(when(c.payment.confirmedAt))}` : 'Not yet confirmed'}</p>` : ''}` : ''}
+        <h3>Information requests</h3>${c.informationRequests.length ? c.informationRequests.map(r => requestCard(r,own)).join('') : '<p class="muted">No information requested.</p>'}
+        ${actions(c,own)}<h3>${officer ? 'Claim activity' : 'Your claim progress'}</h3>${activities(history)}`;
+    });
+  }
+  async function send(operation, body, method = 'POST', keyed = false) {
+    await run(async () => { await api('/claims/' + selected + '/' + operation, method, body, keyed ? crypto.randomUUID() : undefined); await refresh(); });
+  }
+  async function report(event) {
+    event.preventDefault(); const form = event.target, values = new FormData(form);
+    await run(async () => {
+      const result = await api('/claims','POST',{type:values.get('type'),incident:{date:values.get('date'),location:values.get('location'),
+        description:values.get('description'),affectedAsset:values.get('asset')},policyReference:values.get('policy') || null,
+        requestedAmount:values.get('requested') || null},crypto.randomUUID());
+      selected = result.claim.id; await refresh();
+    });
+  }
+  async function act(name, body) { await send(name,body); }
+  async function ask(event) { event.preventDefault(); await send('information-requests',{question:new FormData(event.target).get('question')},'POST',true); }
+  async function answer(event, id) {
+    event.preventDefault(); const values = new FormData(event.target); const body = {answer:values.get('answer')};
+    if (values.get('policy')) body.policyReference = values.get('policy');
+    if (values.get('requested')) body.requestedAmount = values.get('requested');
+    await send('information-requests/' + id + '/answer',body,'POST',true);
+  }
+  async function withdraw(event, id) { event.preventDefault(); await send('information-requests/' + id + '/withdraw',{reason:new FormData(event.target).get('reason')}); }
+  async function release(event) { event.preventDefault(); await send('release',{reason:new FormData(event.target).get('reason') || null}); }
+  async function assess(event) {
+    event.preventDefault(); const values = new FormData(event.target);
+    await send('assessment',{coverage:values.get('coverage'),reason:values.get('reason') || null,
+      assessedLoss:values.get('loss') || null,estimatedUnpaidAmount:values.get('estimate') || null},'PUT');
+  }
+  async function decide(event, kind) {
+    event.preventDefault(); const values = new FormData(event.target);
+    await run(async () => {
+      await api('/claims/' + selected + '/decision','POST',{kind,amount:kind === 'SETTLED' ? values.get('amount') : null,
+        reason:values.get('reason'),reviewedVersion:viewedVersion},crypto.randomUUID());
+      await refresh();
+    });
+  }
+  async function markPaid() { if (confirm('Confirm that payment was completed outside this app?')) await send('mark-paid',{}); }
+  (async () => {
+    try { csrf = (await api('/csrf')).csrfToken; const result = await api('/session'); account = result.account; await refresh(); }
+    catch (error) { signedOut(); $('error').textContent = ''; }
+  })();
+</script>
+</body>
+</html>

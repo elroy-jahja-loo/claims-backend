@@ -56,6 +56,10 @@ class TestFreshClone(unittest.TestCase):
                 target = shutil.which(program)
                 self.assertIsNotNone(target, f"Missing startup prerequisite: {program}")
                 Path(limited_path, program).symlink_to(target)
+            # Docker Desktop may need its own credential helper to pull public images.
+            for helper in ("docker-credential-desktop", "docker-credential-osxkeychain"):
+                if target := shutil.which(helper):
+                    Path(limited_path, helper).symlink_to(target)
             # Normal one-command startup, not a special test-seed profile.
             env = {k: v for k, v in os.environ.items()
                    if not k.startswith(("CLAIMS_TEST_", "CLAIMS_LOCAL_", "POSTGRES_", "SPRING_", "JAVA_"))}
@@ -71,7 +75,7 @@ class TestFreshClone(unittest.TestCase):
                         with urllib.request.urlopen(BASE_URL + "/api/csrf", timeout=2) as response:
                             if response.status == 200:
                                 break
-                    except urllib.error.URLError:
+                    except (urllib.error.URLError, ConnectionError, TimeoutError):
                         if process.poll() is not None:
                             self.fail("./start.sh returned before the application was ready")
                     time.sleep(0.5)
