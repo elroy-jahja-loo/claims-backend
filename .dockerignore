@@ -1,0 +1,6 @@
+.git
+.local
+.env
+.env.local
+MASTER_SPEC.md
+README.md

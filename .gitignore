@@ -1,3 +1,6 @@
 .env
 .env.local
-.local/claimant-a.password
+.local/
+__pycache__/
+*.pyc
+target/

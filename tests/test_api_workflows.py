@@ -167,7 +167,8 @@ class TestAPI(unittest.TestCase):
             barrier.wait(timeout=10)
             return action()
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(actions)) as pool:
-            return [future.result(timeout=25) for future in (pool.submit(run, a) for a in actions)]
+            futures = [pool.submit(run, a) for a in actions]
+            return [future.result(timeout=25) for future in futures]
 
     def test_report_settle_handover_pay_and_reject(self):
         baseline = self.summary()
@@ -395,7 +396,7 @@ class TestAPI(unittest.TestCase):
         self.assertEqual({r["currency"] for r in self.summary()["exposureByCurrency"]} & {"SGD", "USD"}, {"SGD", "USD"})
 
     def test_kafka_late_and_duplicate_notices(self):
-        from confluent_kafka import Consumer, Producer
+        from confluent_kafka import Consumer, Producer, TopicPartition
 
         args = ["docker", "compose", "--env-file", ".env"]
         if (ROOT / ".env.local").exists():
@@ -435,8 +436,12 @@ class TestAPI(unittest.TestCase):
             while time.monotonic() < until:
                 consumer.poll(0.2)
                 assigned = consumer.assignment()
-                if assigned and all(p.offset >= 0 for p in consumer.position(assigned)):
-                    break
+                if assigned:
+                    latest = [consumer.get_watermark_offsets(p)[1] for p in assigned]
+                    if all(offset >= 0 for offset in latest):
+                        for p, offset in zip(assigned, latest):
+                            consumer.seek(TopicPartition(topic, p.partition, offset))
+                        break
             else:
                 self.fail("Kafka capture consumer did not reach its latest offset")
             target_id = self.report()["id"]
